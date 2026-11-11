@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shubhankar Kulkarni</title>
+<meta name="description" content="Shubhankar Kulkarni: database internals engineer working on PostgreSQL's planner, executor and columnar storage at Zoho.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: a left-aligned technical paper; one EXPLAIN ANALYZE block carries the numbers. */
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #17212b;
+  --muted: #56636f;
+  --rule: #d5dce3;
+  --accent: #2c5d86;         /* PostgreSQL slate blue */
+  --accent-soft: #e3ecf4;
+  --gain: #2f7a4f;
+  --bar-before: #b9c4ce;
+  --font-display: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #161e26; --ink: #e4e9ee; --muted: #9aa7b3;
+    --rule: #2a3540; --accent: #86b6de; --accent-soft: #1d2b38;
+    --gain: #74c495; --bar-before: #3a4753; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --ink: #e4e9ee; --muted: #9aa7b3;
+  --rule: #2a3540; --accent: #86b6de; --accent-soft: #1d2b38;
+  --gain: #74c495; --bar-before: #3a4753; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { animation: none !important; transition: none !important; } }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 1.0625rem; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+p { margin: 0; }
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
+
+/* top bar */
+.bar { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.bar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; }
+.prompt { font-family: var(--font-display); font-size: .85rem; color: var(--muted); white-space: nowrap; }
+.prompt b { color: var(--accent); font-weight: 600; }
+nav { display: flex; gap: 20px; font-family: var(--font-display); font-size: .8rem; overflow-x: auto; }
+nav a { color: var(--muted); text-decoration: none; white-space: nowrap; }
+nav a:hover { color: var(--ink); }
+@media (max-width: 720px) { nav { display: none; } }
+
+/* hero */
+.hero { padding: clamp(48px, 9vw, 96px) 0 48px; display: grid; gap: 28px; }
+.kicker { font-family: var(--font-display); font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.hero h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
+.lede { font-size: clamp(1.15rem, 2.2vw, 1.4rem); line-height: 1.5; max-width: 34em; }
+.lede em { font-style: italic; color: var(--accent); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font-display); font-size: .78rem; }
+.facts span { border: 1px solid var(--rule); background: var(--surface); padding: 4px 10px; border-radius: 3px; color: var(--muted); }
+.facts span b { color: var(--ink); font-weight: 500; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.btn { font-family: var(--font-display); font-size: .85rem; padding: 10px 16px; border-radius: 4px; border: 1px solid var(--accent); text-decoration: none; cursor: pointer; background: transparent; color: var(--accent); transition: background .15s, color .15s; }
+.btn.primary { background: var(--accent); color: var(--bg); }
+.btn:hover { background: var(--accent-soft); color: var(--accent); }
+.btn.primary:hover { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.mailtext { font-family: var(--font-display); font-size: .8rem; color: var(--muted); }
+
+/* sections */
+section { padding: 56px 0; border-top: 1px solid var(--rule); scroll-margin-top: 60px; }
+.sec-head { display: grid; grid-template-columns: 180px 1fr; gap: 24px; align-items: baseline; margin-bottom: 28px; }
+.sec-head h2 { font-size: .8rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.sec-head p { font-size: 1.35rem; line-height: 1.35; max-width: 32em; }
+.body-col { margin-left: 204px; }
+@media (max-width: 760px) { .sec-head { grid-template-columns: 1fr; gap: 8px; } .body-col { margin-left: 0; } }
+
+/* EXPLAIN block */
+.explain { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 4px; font-family: var(--font-display); font-size: .82rem; line-height: 1.55; overflow-x: auto; }
+.explain-top { padding: 14px 20px; border-bottom: 1px solid var(--rule); color: var(--muted); }
+.explain-top b { color: var(--accent); font-weight: 600; }
+.node { padding: 18px 20px; border-bottom: 1px dashed var(--rule); display: grid; gap: 10px; }
+.node:last-of-type { border-bottom: 0; }
+.node-title { color: var(--ink); font-weight: 600; }
+.node-title .arrow { color: var(--accent); }
+.node-detail { color: var(--muted); padding-left: 2.2ch; }
+.bars { display: grid; grid-template-columns: 9ch 1fr 8ch; gap: 6px 12px; align-items: center; padding-left: 2.2ch; font-variant-numeric: tabular-nums; }
+.bars .lbl { color: var(--muted); }
+.bars .val { text-align: right; color: var(--ink); }
+.track { height: 10px; background: transparent; position: relative; }
+.fill { position: absolute; inset: 0 auto 0 0; border-radius: 1px; }
+.fill.before { background: var(--bar-before); }
+.fill.after { background: var(--accent); }
+.delta { color: var(--gain); font-weight: 600; padding-left: 2.2ch; }
+.explain-foot { padding: 12px 20px; border-top: 1px solid var(--rule); color: var(--muted); }
+@media (max-width: 520px) { .node, .explain-top, .explain-foot { padding-left: 14px; padding-right: 14px; } .node-detail, .bars, .delta { padding-left: 0; } .bars { grid-template-columns: 8ch 1fr 7ch; gap: 6px 8px; } }
+
+/* experience */
+.role { display: grid; gap: 4px; margin-bottom: 20px; }
+.role h3 { font-size: 1.05rem; font-weight: 600; }
+.role .meta { font-family: var(--font-display); font-size: .8rem; color: var(--muted); }
+.role-note { color: var(--muted); margin-bottom: 28px; max-width: 40em; }
+.work { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+.item { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--rule); }
+.item h3 { font-size: .9rem; font-weight: 500; color: var(--accent); padding-top: 3px; }
+.item p { max-width: 40em; }
+.item code, .oss code { font-family: var(--font-display); font-size: .85em; background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+@media (max-width: 760px) { .item { grid-template-columns: 1fr; gap: 6px; } }
+
+/* open source */
+.oss { display: grid; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 22px 24px; display: grid; gap: 10px; }
+.card-top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.card h3 { font-size: 1rem; font-weight: 600; }
+.pill { font-family: var(--font-display); font-size: .72rem; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--gain); color: var(--gain); white-space: nowrap; }
+.pill.neutral { border-color: var(--rule); color: var(--muted); }
+.card .links { font-family: var(--font-display); font-size: .8rem; display: flex; flex-wrap: wrap; gap: 16px; }
+
+/* skills */
+.skills { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px; }
+.skills h3 { font-size: .8rem; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.tags li { font-family: var(--font-display); font-size: .78rem; border: 1px solid var(--rule); background: var(--surface); padding: 3px 8px; border-radius: 3px; }
+
+/* education */
+.edu { display: grid; gap: 6px; }
+.edu h3 { font-size: 1rem; font-weight: 600; }
+.edu .meta { font-family: var(--font-display); font-size: .8rem; color: var(--muted); }
+.edu ul { margin: 10px 0 0; padding-left: 1.1em; color: var(--muted); }
+
+/* footer */
+footer { border-top: 1px solid var(--rule); padding: 56px 0 72px; }
+footer .wrap { display: grid; gap: 18px; }
+footer h2 { font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 600; }
+.small { font-family: var(--font-display); font-size: .75rem; color: var(--muted); }
+.toast { font-family: var(--font-display); font-size: .78rem; color: var(--gain); min-height: 1.2em; }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <div class="prompt"><b>shubhankar</b>=#</div>
+    <nav aria-label="Sections">
+      <a href="#results">Results</a>
+      <a href="#experience">Experience</a>
+      <a href="#open-source">Open source</a>
+      <a href="#skills">Skills</a>
+      <a href="#education">Education</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div class="kicker">Database internals engineer · Zoho Z-Labs</div>
+    <h1>Shubhankar Kulkarni</h1>
+    <p class="lede">I work on the parts of PostgreSQL that decide how a query runs: <em>the planner, the executor and the columnar storage underneath.</em> I write C/C++ for CStore, a vectorized, multi-threaded columnar engine running on production clusters of 5M+ tables.</p>
+    <div class="facts" aria-label="At a glance">
+      <span><b>3+ yrs</b> PostgreSQL internals</span>
+      <span><b>C · C++20</b> · SQL</span>
+      <span><b>PG 19</b> patch author</span>
+      <span><b>110+</b> bug fixes shipped</span>
+    </div>
+    <div class="actions">
+      <a class="btn primary" href="mailto:shubhankarkul00@gmail.com">Email me</a>
+      <button class="btn" type="button" id="copy-email">Copy email</button>
+      <a class="btn" href="https://www.linkedin.com/in/shubhankar-kulkarni-bba4321b5/">LinkedIn</a>
+      <span class="mailtext">shubhankarkul00@gmail.com</span>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <section id="results">
+    <div class="sec-head">
+      <h2>Results</h2>
+      <p>Measured on real customer workloads, not microbenchmarks.</p>
+    </div>
+    <div class="explain" role="figure" aria-label="Selected performance results shown as an EXPLAIN ANALYZE plan">
+      <div class="explain-top"><b>EXPLAIN</b> (ANALYZE, BUFFERS) <span>-- selected work, CStore 5.0 – 5.5</span></div>
+
+      <div class="node">
+        <div class="node-title"><span class="arrow">-&gt;</span> Hash Join: key computation pushed into the vectorized scan</div>
+        <div class="node-detail">Customer query · 106 GB fact table · CSE extended to hash and nested-loop join conditions</div>
+        <div class="bars">
+          <span class="lbl">before</span><div class="track"><div class="fill before" style="width:100%"></div></div><span class="val">342.7 s</span>
+          <span class="lbl">after</span><div class="track"><div class="fill after" style="width:85.2%"></div></div><span class="val">292.0 s</span>
+        </div>
+        <div class="delta">−14.8% execution time</div>
+      </div>
+
+      <div class="node">
+        <div class="node-title"><span class="arrow">-&gt;</span> Columnar Scan: 1,975 auto-generated block-skip filters, 1,972 skipped nothing</div>
+        <div class="node-detail">Release regression · 19-join, 190-column report · filters disabled</div>
+        <div class="bars">
+          <span class="lbl">time</span><div class="track"><div class="fill before" style="width:100%"></div></div><span class="val">43.4 s</span>
+          <span class="lbl"></span><div class="track"><div class="fill after" style="width:45.4%"></div></div><span class="val">19.7 s</span>
+          <span class="lbl">peak mem</span><div class="track"><div class="fill before" style="width:100%"></div></div><span class="val">1.7 GB</span>
+          <span class="lbl"></span><div class="track"><div class="fill after" style="width:58.8%"></div></div><span class="val">1.0 GB</span>
+        </div>
+        <div class="delta">2.2× faster · −42% peak memory</div>
+      </div>
+
+      <div class="explain-foot">Planning: query optimizer · Execution: vectorized, multi-threaded · Bug fixes: 110+, backported across stable branches</div>
+    </div>
+  </section>
+
+  <section id="experience">
+    <div class="sec-head">
+      <h2>Experience</h2>
+      <p>Zoho Corporation, Z-Labs Database Team.</p>
+    </div>
+    <div class="body-col">
+      <div class="role">
+        <h3>Member Technical Staff</h3>
+        <div class="meta">Jul 2023 – Present · Z-Labs Database Team</div>
+      </div>
+      <div class="role">
+        <h3>Summer Intern</h3>
+        <div class="meta">May – Jun 2022, Feb – Mar 2023 · Z-Labs Relational Database Team</div>
+      </div>
+      <p class="role-note">Work spans CStore (Zoho's columnar engine for PostgreSQL) release lines 5.0 – 5.5 and Zoho's PostgreSQL fork.</p>
+    </div>
+
+    <div class="work">
+      <div class="item">
+        <h3>Join optimizer</h3>
+        <p>Moved expensive join-key computation out of the hash join and into the vectorized scan, and extended common-subexpression elimination to hash and nested-loop join conditions, so each key is computed once per row instead of once per row pair. Cut a customer query on a 106 GB fact table from 342.7 s to 292.0 s. Wrote the safety rules for outer, multi-hash <code>OR</code> and <code>IS NOT DISTINCT FROM</code> joins, each pinned by a regression test.</p>
+      </div>
+      <div class="item">
+        <h3>Performance regressions</h3>
+        <p>Traced a release slowdown in a 19-join, 190-column report to 1,975 auto-generated block-skip filters, 1,972 of which skipped nothing. Disabling them made the query 2.2× faster (43.4 s to 19.7 s) and cut peak memory 42% (1.7 GB to 1.0 GB).</p>
+      </div>
+      <div class="item">
+        <h3>Production incidents</h3>
+        <p>Root-caused production crashes from core dumps, and SQLsmith fuzzer wrong-result reports: worker-thread crashes in a new <code>DISTINCT</code> node, an <code>EXPLAIN ANALYZE</code> crash on <code>INSERT</code>s with duplicated sub-plans, hash joins returning wrong rows for <code>NULL</code> keys. Used gdb Python scripting and ASan/UBSan builds. 110+ bug fixes, backported across stable release branches.</p>
+      </div>
+      <div class="item">
+        <h3>PostgreSQL planner</h3>
+        <p>Prototyped join-expression pushdown inside PostgreSQL's planner (<code>createplan.c</code>, <code>setrefs.c</code>): expensive join operands such as decrypt functions move into the child scan. Outer-join safe and GUC-gated.</p>
+      </div>
+      <div class="item">
+        <h3>Parallel safety</h3>
+        <p>Built parallel-safety analysis for vectorized expression trees: non-thread-safe functions stay on the main thread while the rest of the query runs on worker threads.</p>
+      </div>
+      <div class="item">
+        <h3>Functions and builds</h3>
+        <p>Added vectorized SQL functions (string, numeric, date/time); delivered Linux x86/ARM, Windows and macOS builds and linked jemalloc into the PostgreSQL build.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="open-source">
+    <div class="sec-head">
+      <h2>Open source</h2>
+      <p>Upstream PostgreSQL work, through the pgsql-hackers patch process.</p>
+    </div>
+    <div class="oss body-col">
+      <article class="card">
+        <div class="card-top">
+          <h3>PostgreSQL 19 bug fix · CommitFest #7436</h3>
+          <span class="pill">Ready for Committer</span>
+        </div>
+        <p>Four planner code paths (eager aggregation, unique paths, min/max) copied a relation struct byte-for-byte, so the copy shared PG19's new extension state with the original; an extension writing to the copy could free memory the original still used. Fixed with per-site resets plus a new <code>test_extendplan</code> test module. 2 patches, +377 lines, passes cfbot CI, reviewed by Sho Ito.</p>
+        <div class="links">
+          <a href="https://commitfest.postgresql.org/patch/7436/">CommitFest entry</a>
+          <a href="https://postgr.es/m/1a12fb3a08d.429ac7fc62960.6325095284115187647@zohocorp.com">pgsql-hackers thread</a>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-top">
+          <h3>Design proposal: expression push down from join node to below node</h3>
+          <span class="pill neutral">May – Jun 2025</span>
+        </div>
+        <p>Proposed on pgsql-hackers and discussed with Andy Fan. Later implemented in CStore as the join-key optimization above.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="skills">
+    <div class="sec-head">
+      <h2>Skills</h2>
+      <p>From the planner hook to the core dump.</p>
+    </div>
+    <div class="skills body-col">
+      <div>
+        <h3>Database internals</h3>
+        <ul class="tags">
+          <li>Query optimizer</li><li>Execution engine</li><li>Planner hooks</li><li>FDW &amp; extension APIs</li><li>Memory contexts</li><li>EXPLAIN instrumentation</li><li>Columnar storage</li><li>Vectorized execution</li><li>Multi-threaded execution</li><li>Hash joins &amp; aggregation</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Languages</h3>
+        <ul class="tags"><li>C</li><li>C++20</li><li>SQL</li><li>PL/pgSQL</li><li>Bash</li><li>Python</li></ul>
+      </div>
+      <div>
+        <h3>Debugging &amp; performance</h3>
+        <ul class="tags"><li>gdb + Python scripting</li><li>Core-dump analysis</li><li>ASan / UBSan</li><li>SQLsmith fuzzing</li><li>EXPLAIN ANALYZE</li><li>Benchmarking</li></ul>
+      </div>
+      <div>
+        <h3>Workflow &amp; build</h3>
+        <ul class="tags"><li>pgsql-hackers workflow</li><li>CommitFest / cfbot</li><li>pg_regress</li><li>Stable-branch backports</li><li>CMake</li><li>Meson</li><li>Autoconf</li><li>CI</li><li>Linux x86 / ARM</li><li>Windows</li><li>macOS</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="education">
+    <div class="sec-head">
+      <h2>Education</h2>
+      <p>Government College of Engineering, Nagpur.</p>
+    </div>
+    <div class="edu body-col">
+      <h3>B.E., Computer Science and Engineering</h3>
+      <div class="meta">2019 – 2023 · CGPA 8.93 / 10</div>
+      <ul>
+        <li>Technical Head, Adhyaaya'21 (college tech symposium)</li>
+        <li>1st prize, RoboSoccer, RCOEM · 2nd prize, Innventrix hackathon</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer id="contact">
+  <div class="wrap">
+    <div class="kicker">Contact</div>
+    <h2>Hiring for database internals? Let's talk.</h2>
+    <div class="actions">
+      <a class="btn primary" href="mailto:shubhankarkul00@gmail.com">Email me</a>
+      <a class="btn" href="https://www.linkedin.com/in/shubhankar-kulkarni-bba4321b5/">LinkedIn</a>
+      <span class="mailtext">shubhankarkul00@gmail.com</span>
+    </div>
+    <p class="small">Figures are from production customer workloads at Zoho.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var btn = document.getElementById('copy-email');
+  var toast = document.getElementById('toast');
+  btn.addEventListener('click', function () {
+    var addr = 'shubhankarkul00@gmail.com';
+    function done(msg) { toast.textContent = msg; setTimeout(function () { toast.textContent = ''; }, 2500); }
+    try {
+      navigator.clipboard.writeText(addr).then(function () { done('Email address copied.'); },
+        function () { done('Copy was blocked. The address is ' + addr); });
+    } catch (e) { done('Copy was blocked. The address is ' + addr); }
+  });
+})();
+</script>
+</body>
+</html>
